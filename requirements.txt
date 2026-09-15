@@ -2,4 +2,5 @@ Flask
 numpy
 opencv-contrib-python-headless
 deepface
+tf-keras
 gunicorn
