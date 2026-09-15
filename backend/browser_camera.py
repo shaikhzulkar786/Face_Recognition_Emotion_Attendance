@@ -65,11 +65,6 @@ registration_lock = threading.Lock()
 recognizer_cache = None
 recognizer_lock = threading.Lock()
 
-emotion_cache = {}
-emotion_lock = threading.Lock()
-EMOTION_REFRESH_SECONDS = 1.5
-
-
 # ============================================================
 # FACE DETECTOR
 # ============================================================
@@ -846,89 +841,46 @@ def browser_register_finish():
 
 
 # ============================================================
-# ASYNC EMOTION DETECTION
+# EMOTION DETECTION
 # ============================================================
 
-def _emotion_worker(person_id, face_color):
+def detect_emotion(face_color):
+    """
+    Original working emotion-detection method.
+    DeepFace runs directly on the original COLOR face crop.
+    """
     try:
         from deepface import DeepFace
 
         if face_color is None or face_color.size == 0:
-            emotion = "Unknown"
-        else:
-            analysis = DeepFace.analyze(
-                face_color,
-                actions=["emotion"],
-                enforce_detection=False,
-                detector_backend="opencv"
-            )
+            return "Unknown"
 
-            if isinstance(analysis, list):
-                analysis = analysis[0]
+        analysis = DeepFace.analyze(
+            face_color,
+            actions=["emotion"],
+            enforce_detection=False,
+            detector_backend="opencv"
+        )
 
-            emotion = str(
-                analysis.get("dominant_emotion", "Unknown")
-            ).capitalize()
+        if isinstance(analysis, list):
+            analysis = analysis[0]
 
-        with emotion_lock:
-            emotion_cache[person_id] = {
-                "emotion": emotion,
-                "updated": time.time(),
-                "processing": False
-            }
+        emotion = str(
+            analysis.get("dominant_emotion", "Unknown")
+        ).capitalize()
 
         print(
-            f"Emotion updated -> ID: {person_id}, Emotion: {emotion}"
+            f"Emotion detected -> {emotion}"
         )
+
+        return emotion
 
     except Exception as error:
         print(
-            f"Emotion detection warning for ID {person_id}: {error}"
+            "Emotion detection warning:",
+            error
         )
-
-        with emotion_lock:
-            old = emotion_cache.get(person_id, {})
-            emotion_cache[person_id] = {
-                "emotion": old.get("emotion", "Unknown"),
-                "updated": old.get("updated", 0),
-                "processing": False
-            }
-
-
-def get_cached_emotion(person_id, face_color):
-    now = time.time()
-
-    with emotion_lock:
-        cached = emotion_cache.get(person_id)
-
-        if cached is None:
-            emotion_cache[person_id] = {
-                "emotion": "Unknown",
-                "updated": 0,
-                "processing": True
-            }
-            should_start = True
-        elif (
-            now - cached.get("updated", 0)
-            >= EMOTION_REFRESH_SECONDS
-            and not cached.get("processing", False)
-        ):
-            cached["processing"] = True
-            should_start = True
-        else:
-            should_start = False
-
-        emotion = cached.get("emotion", "Unknown") if cached else "Unknown"
-
-    if should_start:
-        face_copy = face_color.copy()
-        threading.Thread(
-            target=_emotion_worker,
-            args=(person_id, face_copy),
-            daemon=True
-        ).start()
-
-    return emotion
+        return "Unknown"
 
 
 # ============================================================
@@ -1089,15 +1041,14 @@ def browser_process_frame():
                 name = "Unknown"
 
 
-            emotion = "Unknown"
-
-
             # ------------------------------------------------
-            # FAST ASYNC EMOTION DETECTION
+            # EMOTION DETECTION
             # ------------------------------------------------
-
-            emotion = get_cached_emotion(
-                int(person_id),
+            # IMPORTANT:
+            # Use the original COLOR face crop for DeepFace.
+            # This is the same approach used by the original
+            # working version.
+            emotion = detect_emotion(
                 frame[y:y + h, x:x + w]
             )
 
