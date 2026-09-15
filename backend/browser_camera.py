@@ -1066,7 +1066,7 @@ def browser_process_frame():
             # ------------------------------------------------
 
             recognized = (
-                confidence <= 60.0
+                confidence <= 45.0
             )
 
 
