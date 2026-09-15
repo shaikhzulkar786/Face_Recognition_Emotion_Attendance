@@ -32,11 +32,11 @@ let processingFrame = false;
 
 // Recognition request interval.
 // Backend itself controls emotion frequency.
-const RECOGNITION_INTERVAL = 1800;
+const RECOGNITION_INTERVAL = 1500;
 
 
 // Registration interval.
-const REGISTRATION_INTERVAL = 350;
+const REGISTRATION_INTERVAL = 200;
 
 
 // ============================================================
@@ -1277,7 +1277,7 @@ function startRecognitionLoop() {
 
             },
 
-            RECOGNITION_INTERVAL
+            1500
 
         );
 
@@ -1748,7 +1748,7 @@ function startRegistrationLoop() {
 
             },
 
-            REGISTRATION_INTERVAL
+            200
 
         );
 

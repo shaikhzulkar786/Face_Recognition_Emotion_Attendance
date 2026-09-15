@@ -69,6 +69,11 @@ registration_lock = threading.Lock()
 recognizer_cache = None
 recognizer_lock = threading.Lock()
 
+# Emotion cache: DeepFace is heavy on Render, so do not run it on every frame.
+emotion_cache = {}
+emotion_cache_lock = threading.Lock()
+EMOTION_CACHE_SECONDS = 2.5
+
 # ============================================================
 # FACE DETECTOR
 # ============================================================
@@ -472,9 +477,9 @@ def browser_register_frame():
 
             scaleFactor=1.1,
 
-            minNeighbors=5,
+            minNeighbors=6,
 
-            minSize=(100, 100)
+            minSize=(80, 80)
 
         )
 
@@ -845,14 +850,51 @@ def browser_register_finish():
 
 
 # ============================================================
+# NORMALIZE FACE FOR LBPH
+# ============================================================
+
+def normalize_face(face):
+    try:
+        if face is None or face.size == 0:
+            return None
+
+        if len(face.shape) == 3:
+            gray = cv2.cvtColor(face, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = face
+
+        gray = cv2.resize(
+            gray,
+            (200, 200),
+            interpolation=cv2.INTER_AREA
+        )
+
+        # Same contrast normalization used by the original working code.
+        gray = cv2.equalizeHist(gray)
+
+        return gray
+
+    except Exception as error:
+        print("Face normalization error:", error)
+        return None
+
+
+# ============================================================
 # EMOTION DETECTION
 # ============================================================
 
-def detect_emotion(face_color):
+def detect_emotion(person_id, face_color):
     """
-    Original working emotion-detection method.
-    DeepFace runs directly on the original COLOR face crop.
+    Detect emotion using the original working DeepFace method.
+    Cached briefly because DeepFace is expensive on Render.
     """
+    now = time.time()
+
+    with emotion_cache_lock:
+        cached = emotion_cache.get(int(person_id))
+        if cached and now - cached["time"] < EMOTION_CACHE_SECONDS:
+            return cached["emotion"]
+
     try:
         if face_color is None or face_color.size == 0:
             return "Unknown"
@@ -871,17 +913,17 @@ def detect_emotion(face_color):
             analysis.get("dominant_emotion", "Unknown")
         ).capitalize()
 
-        print(
-            f"Emotion detected -> {emotion}"
-        )
+        with emotion_cache_lock:
+            emotion_cache[int(person_id)] = {
+                "emotion": emotion,
+                "time": time.time()
+            }
 
+        print(f"Emotion detected -> {emotion}")
         return emotion
 
     except Exception as error:
-        print(
-            "Emotion detection warning:",
-            error
-        )
+        print("Emotion detection warning:", error)
         return "Unknown"
 
 
@@ -972,9 +1014,9 @@ def browser_process_frame():
 
             scaleFactor=1.1,
 
-            minNeighbors=5,
+            minNeighbors=6,
 
-            minSize=(100, 100)
+            minSize=(80, 80)
 
         )
 
@@ -990,24 +1032,19 @@ def browser_process_frame():
         ) in faces:
 
 
-            face_image = gray[
+            face_color = frame[
                 y:y + h,
                 x:x + w
             ]
 
-
-            if face_image.size == 0:
-
+            if face_color.size == 0:
                 continue
 
+            # Use the original working LBPH normalization.
+            face_image = normalize_face(face_color)
 
-            face_image = cv2.resize(
-
-                face_image,
-
-                (200, 200)
-
-            )
+            if face_image is None:
+                continue
 
 
             person_id, confidence = (
@@ -1023,7 +1060,7 @@ def browser_process_frame():
             # ------------------------------------------------
 
             recognized = (
-                confidence < 80
+                confidence <= 60.0
             )
 
 
@@ -1046,13 +1083,16 @@ def browser_process_frame():
             # ------------------------------------------------
             # EMOTION DETECTION
             # ------------------------------------------------
-            # IMPORTANT:
-            # Use the original COLOR face crop for DeepFace.
-            # This is the same approach used by the original
-            # working version.
-            emotion = detect_emotion(
-                frame[y:y + h, x:x + w]
-            )
+            # Only run DeepFace for a recognized person. This prevents
+            # false/irrelevant emotion work on unknown faces and makes
+            # the Render version much faster.
+            if recognized:
+                emotion = detect_emotion(
+                    int(person_id),
+                    face_color
+                )
+            else:
+                emotion = "Unknown"
 
             # ------------------------------------------------
             # MARK ATTENDANCE
