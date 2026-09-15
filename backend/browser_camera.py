@@ -12,6 +12,10 @@ import os
 import threading
 import time
 
+# Load DeepFace once when the worker starts.
+# This prevents the first camera request from timing out on Render.
+from deepface import DeepFace
+
 import cv2
 import numpy as np
 
@@ -850,8 +854,6 @@ def detect_emotion(face_color):
     DeepFace runs directly on the original COLOR face crop.
     """
     try:
-        from deepface import DeepFace
-
         if face_color is None or face_color.size == 0:
             return "Unknown"
 
