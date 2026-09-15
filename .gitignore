@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+# Virtual environments
+venv/
+.venv/
+env/
+# VS Code
+.vscode/
+# Database
+database/*.db
+database/*.sqlite
+database/*.sqlite3
+# Student/private data
+database/students.json
+# Face dataset
+dataset/
+# Logs
+*.log
+# OS
+.DS_Store
+Thumbs.db
