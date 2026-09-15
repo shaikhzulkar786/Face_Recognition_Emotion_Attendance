@@ -7,7 +7,7 @@ import shutil
 import sqlite3
 from .browser_camera import browser_camera
 
-from .attendance import get_attendance
+from .attendance import get_attendance, create_database
 
 
 # ============================================================
@@ -48,6 +48,7 @@ app = Flask(
     static_url_path="/static"
 )
 app.register_blueprint(browser_camera)
+create_database()
 
 
 # ============================================================

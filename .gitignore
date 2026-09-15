@@ -12,8 +12,6 @@ env/
 database/*.db
 database/*.sqlite
 database/*.sqlite3
-# Student/private data
-database/students.json
 # Face dataset
 dataset/
 # Logs
