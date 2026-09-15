@@ -1,6 +1,7 @@
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 
 # =========================================================
@@ -13,6 +14,21 @@ DATABASE_DIR = BASE_DIR / "database"
 DATABASE_DIR.mkdir(exist_ok=True)
 
 DATABASE_FILE = DATABASE_DIR / "attendance.db"
+
+
+# =========================================================
+# INDIA TIMEZONE
+# =========================================================
+
+INDIA_TIMEZONE = ZoneInfo("Asia/Kolkata")
+
+
+def get_india_time():
+    """
+    Always return current India time (IST),
+    regardless of server timezone.
+    """
+    return datetime.now(INDIA_TIMEZONE)
 
 
 # =========================================================
@@ -93,7 +109,7 @@ def create_database():
             """, (
                 person_id,
                 name,
-                datetime.now().strftime(
+                get_india_time().strftime(
                     "%Y-%m-%d %H:%M:%S"
                 )
             ))
@@ -125,7 +141,7 @@ def register_student(person_id, name):
     connection = sqlite3.connect(DATABASE_FILE)
     cursor = connection.cursor()
 
-    registered_at = datetime.now().strftime(
+    registered_at = get_india_time().strftime(
         "%Y-%m-%d %H:%M:%S"
     )
 
@@ -249,7 +265,11 @@ def mark_attendance(
 
         create_database()
 
-        now = datetime.now()
+        # -------------------------------------------------
+        # INDIA TIME
+        # -------------------------------------------------
+
+        now = get_india_time()
 
         date = now.strftime(
             "%Y-%m-%d"
@@ -320,7 +340,7 @@ def mark_attendance(
             f"Attendance marked: "
             f"{name} | "
             f"{emotion} | "
-            f"{date} {time}"
+            f"{date} {time} IST"
         )
 
         return True
