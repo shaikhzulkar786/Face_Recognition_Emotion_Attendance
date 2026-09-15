@@ -1,6 +1,7 @@
 // ============================================================
 // SMART ATTENDANCE SYSTEM
-// frontend/script.js
+// FAST BROWSER CAMERA
+// FACE RECOGNITION + EMOTION + ATTENDANCE
 // ============================================================
 
 
@@ -8,286 +9,560 @@
 // GLOBAL VARIABLES
 // ============================================================
 
+let cameraStream = null;
+
 let cameraRunning = false;
-let refreshInterval = null;
+
+let cameraMode = "attendance";
+
+let registrationRunning = false;
+
+let registrationStudentId = null;
+
+let registrationTotalPhotos = 200;
+
+let registrationCaptured = 0;
+
+let recognitionTimer = null;
+
+let registrationTimer = null;
+
+let processingFrame = false;
+
+
+// Recognition request interval.
+// Backend itself controls emotion frequency.
+const RECOGNITION_INTERVAL = 1800;
+
+
+// Registration interval.
+const REGISTRATION_INTERVAL = 350;
 
 
 // ============================================================
-// PAGE LOAD
+// INITIALIZE
 // ============================================================
 
-document.addEventListener("DOMContentLoaded", function () {
+document.addEventListener(
+    "DOMContentLoaded",
+    function () {
 
-    loadAttendance();
+        setupCameraArea();
 
-    loadStats();
+        refreshDashboard();
 
-    loadStudents();
-
-    checkCameraStatus();
-
-    startAutoRefresh();
-
-});
-
-
-// ============================================================
-// AUTO REFRESH
-// ============================================================
-
-function startAutoRefresh() {
-
-    if (refreshInterval) {
-        clearInterval(refreshInterval);
-    }
-
-    refreshInterval = setInterval(function () {
-
-        loadAttendance();
-
-        loadStats();
-
-        loadStudents();
-
-        checkCameraStatus();
-
-    }, 3000);
-
-}
-
-
-// ============================================================
-// LOAD ATTENDANCE
-// ============================================================
-
-async function loadAttendance() {
-
-    try {
-
-        const response =
-            await fetch("/api/attendance");
-
-
-        if (!response.ok) {
-
-            throw new Error(
-                "Failed to load attendance records."
-            );
-
-        }
-
-
-        const records =
-            await response.json();
-
-
-        const tableBody =
-            document.getElementById(
-                "attendanceTableBody"
-            );
-
-
-        if (!tableBody) {
-
-            console.error(
-                "attendanceTableBody not found."
-            );
-
-            return;
-
-        }
-
-
-        tableBody.innerHTML = "";
-
-
-        if (
-            !records ||
-            records.length === 0
-        ) {
-
-            tableBody.innerHTML = `
-                <tr>
-                    <td
-                        colspan="6"
-                        style="text-align:center;"
-                    >
-                        No attendance records found.
-                    </td>
-                </tr>
-            `;
-
-            return;
-
-        }
-
-
-        records.forEach(function (record) {
-
-            const row =
-                document.createElement("tr");
-
-
-            row.innerHTML = `
-
-                <td>
-                    ${record.person_id ?? "-"}
-                </td>
-
-                <td>
-                    ${escapeHtml(
-                        record.name ?? "-"
-                    )}
-                </td>
-
-                <td>
-                    ${escapeHtml(
-                        record.emotion ?? "Unknown"
-                    )}
-                </td>
-
-                <td>
-                    ${escapeHtml(
-                        record.date ?? "-"
-                    )}
-                </td>
-
-                <td>
-                    ${escapeHtml(
-                        record.time ?? "-"
-                    )}
-                </td>
-
-                <td>
-
-                    <button
-                        class="attendance-delete-btn"
-                        onclick="deleteAttendance(${record.id})"
-                    >
-                        Delete
-                    </button>
-
-                </td>
-
-            `;
-
-
-            tableBody.appendChild(row);
-
-        });
-
-    }
-
-    catch (error) {
-
-        console.error(
-            "Load attendance error:",
-            error
+        setInterval(
+            refreshDashboard,
+            5000
         );
 
     }
+);
+
+
+// ============================================================
+// ESCAPE HTML
+// ============================================================
+
+function escapeHtml(value) {
+
+    if (
+        value === null ||
+        value === undefined
+    ) {
+
+        return "";
+
+    }
+
+
+    return String(value)
+
+        .replace(
+            /&/g,
+            "&amp;"
+        )
+
+        .replace(
+            /</g,
+            "&lt;"
+        )
+
+        .replace(
+            />/g,
+            "&gt;"
+        )
+
+        .replace(
+            /"/g,
+            "&quot;"
+        )
+
+        .replace(
+            /'/g,
+            "&#039;"
+        );
 
 }
 
 
 // ============================================================
-// DELETE ATTENDANCE RECORD
+// CAMERA AREA
 // ============================================================
 
-async function deleteAttendance(
-    attendanceId
+function setupCameraArea() {
+
+    const container =
+        document.querySelector(
+            ".camera-container"
+        );
+
+
+    if (!container) {
+
+        return;
+
+    }
+
+
+    container.innerHTML = `
+
+        <div
+            id="browserCameraBox"
+            style="
+                position:relative;
+                width:100%;
+                max-width:900px;
+                margin:auto;
+                background:#111827;
+                border-radius:12px;
+                overflow:hidden;
+                min-height:400px;
+                display:flex;
+                align-items:center;
+                justify-content:center;
+            "
+        >
+
+            <video
+                id="cameraVideo"
+                autoplay
+                playsinline
+                muted
+                style="
+                    width:100%;
+                    height:auto;
+                    max-height:600px;
+                    display:none;
+                    object-fit:contain;
+                    background:#111827;
+                "
+            ></video>
+
+
+            <canvas
+                id="cameraOverlay"
+                style="
+                    position:absolute;
+                    pointer-events:none;
+                    display:none;
+                "
+            ></canvas>
+
+
+            <div
+                id="cameraPlaceholder"
+                style="
+                    text-align:center;
+                    color:white;
+                    padding:50px 20px;
+                "
+            >
+
+                <div
+                    style="
+                        font-size:60px;
+                    "
+                >
+                    📷
+                </div>
+
+                <h3>
+                    Smart Attendance Camera
+                </h3>
+
+                <p>
+                    Start the camera to recognize students
+                </p>
+
+            </div>
+
+        </div>
+
+
+        <canvas
+            id="captureCanvas"
+            style="display:none;"
+        ></canvas>
+
+
+        <div
+            id="cameraMessage"
+            style="
+                text-align:center;
+                margin-top:12px;
+                font-weight:600;
+            "
+        ></div>
+
+    `;
+
+}
+
+
+// ============================================================
+// CAMERA STATUS
+// ============================================================
+
+function updateCameraStatus(running) {
+
+    const status =
+        document.getElementById(
+            "cameraStatus"
+        );
+
+
+    const startButton =
+        document.getElementById(
+            "startCameraBtn"
+        );
+
+
+    const stopButton =
+        document.getElementById(
+            "stopCameraBtn"
+        );
+
+
+    if (running) {
+
+        if (status) {
+
+            status.textContent =
+                "Camera Running";
+
+            status.classList.remove(
+                "camera-stopped"
+            );
+
+            status.classList.add(
+                "camera-running"
+            );
+
+        }
+
+
+        if (startButton) {
+
+            startButton.disabled =
+                true;
+
+        }
+
+
+        if (stopButton) {
+
+            stopButton.disabled =
+                false;
+
+        }
+
+    }
+
+    else {
+
+        if (status) {
+
+            status.textContent =
+                "Camera Stopped";
+
+            status.classList.remove(
+                "camera-running"
+            );
+
+            status.classList.add(
+                "camera-stopped"
+            );
+
+        }
+
+
+        if (startButton) {
+
+            startButton.disabled =
+                false;
+
+        }
+
+
+        if (stopButton) {
+
+            stopButton.disabled =
+                true;
+
+        }
+
+    }
+
+}
+
+
+// ============================================================
+// CAMERA MESSAGE
+// ============================================================
+
+function showCameraMessage(
+    message,
+    type = "normal"
 ) {
 
-    try {
-
-        if (
-            attendanceId === undefined ||
-            attendanceId === null ||
-            attendanceId === ""
-        ) {
-
-            alert(
-                "Invalid attendance record ID."
-            );
-
-            return;
-
-        }
-
-
-        const confirmed =
-            confirm(
-
-                "Are you sure you want to delete " +
-                "this attendance record?\n\n" +
-
-                "Only this attendance record will " +
-                "be deleted.\n\n" +
-
-                "Student registration and photos " +
-                "will NOT be deleted."
-
-            );
-
-
-        if (!confirmed) {
-
-            return;
-
-        }
-
-
-        const response =
-            await fetch(
-                `/api/attendance/${attendanceId}`,
-                {
-                    method: "DELETE"
-                }
-            );
-
-
-        const result =
-            await response.json();
-
-
-        if (
-            !response.ok ||
-            !result.success
-        ) {
-
-            alert(
-                result.message ||
-                "Attendance record delete failed."
-            );
-
-            return;
-
-        }
-
-
-        alert(
-            result.message
+    const element =
+        document.getElementById(
+            "cameraMessage"
         );
 
 
-        await loadAttendance();
+    if (!element) {
 
-        await loadStats();
+        return;
 
     }
+
+
+    element.textContent =
+        message;
+
+
+    if (type === "success") {
+
+        element.style.color =
+            "green";
+
+    }
+
+    else if (type === "error") {
+
+        element.style.color =
+            "red";
+
+    }
+
+    else {
+
+        element.style.color =
+            "#2563eb";
+
+    }
+
+}
+
+
+// ============================================================
+// START CAMERA
+// ============================================================
+
+async function startCamera() {
+
+    try {
+
+        if (cameraRunning) {
+
+            showCameraMessage(
+                "Camera is already running."
+            );
+
+            return;
+
+        }
+
+
+        if (
+            !navigator.mediaDevices ||
+            !navigator.mediaDevices.getUserMedia
+        ) {
+
+            alert(
+                "Browser camera supported nahi hai.\n\n" +
+                "Chrome ya Edge use karo."
+            );
+
+            return;
+
+        }
+
+
+        showCameraMessage(
+            "Requesting camera permission..."
+        );
+
+
+        cameraStream =
+            await navigator.mediaDevices.getUserMedia({
+
+                video: {
+
+                    width: {
+                        ideal: 640
+                    },
+
+                    height: {
+                        ideal: 360
+                    },
+
+                    facingMode:
+                        "user"
+
+                },
+
+                audio: false
+
+            });
+
+
+        const video =
+            document.getElementById(
+                "cameraVideo"
+            );
+
+
+        const overlay =
+            document.getElementById(
+                "cameraOverlay"
+            );
+
+
+        const placeholder =
+            document.getElementById(
+                "cameraPlaceholder"
+            );
+
+
+        if (!video) {
+
+            throw new Error(
+                "Camera video element not found."
+            );
+
+        }
+
+
+        video.srcObject =
+            cameraStream;
+
+
+        await video.play();
+
+
+        video.style.display =
+            "block";
+
+
+        if (overlay) {
+
+            overlay.style.display =
+                "block";
+
+        }
+
+
+        if (placeholder) {
+
+            placeholder.style.display =
+                "none";
+
+        }
+
+
+        cameraRunning =
+            true;
+
+
+        cameraMode =
+            "attendance";
+
+
+        updateCameraStatus(
+            true
+        );
+
+
+        showCameraMessage(
+            "Camera started. Looking for registered students..."
+        );
+
+
+        startRecognitionLoop();
+
+    }
+
 
     catch (error) {
 
         console.error(
-            "Delete attendance error:",
+            "Camera start error:",
             error
         );
 
 
+        cameraRunning =
+            false;
+
+
+        updateCameraStatus(
+            false
+        );
+
+
+        let message =
+            "Unable to access camera.";
+
+
+        if (
+            error.name ===
+            "NotAllowedError"
+        ) {
+
+            message =
+                "Camera permission denied.\n\n" +
+                "Browser address bar se Camera → Allow karo.";
+
+        }
+
+
+        else if (
+            error.name ===
+            "NotFoundError"
+        ) {
+
+            message =
+                "Camera not found.";
+
+        }
+
+
+        else if (
+            error.name ===
+            "NotReadableError"
+        ) {
+
+            message =
+                "Camera kisi dusre application mein use ho raha hai.";
+
+        }
+
+
         alert(
-            "Server error while deleting " +
-            "attendance record.\n\n" +
-            "Flask terminal check karo."
+            message
         );
 
     }
@@ -296,94 +571,736 @@ async function deleteAttendance(
 
 
 // ============================================================
-// LOAD DASHBOARD STATS
+// STOP CAMERA
 // ============================================================
 
-async function loadStats() {
+async function stopCamera() {
 
     try {
 
-        const response =
-            await fetch("/api/stats");
+        stopRecognitionLoop();
+
+        stopRegistrationLoop();
 
 
-        if (!response.ok) {
+        if (cameraStream) {
 
-            throw new Error(
-                "Failed to load statistics."
-            );
+            cameraStream
+                .getTracks()
+                .forEach(
+                    function (track) {
 
-        }
+                        track.stop();
 
-
-        const stats =
-            await response.json();
-
-
-        // ----------------------------------------
-        // TOTAL RECORDS
-        // ----------------------------------------
-
-        const totalRecordsElement =
-            document.getElementById(
-                "totalRecords"
-            );
+                    }
+                );
 
 
-        if (totalRecordsElement) {
-
-            totalRecordsElement.textContent =
-                stats.total_records ?? 0;
+            cameraStream =
+                null;
 
         }
 
 
-        // ----------------------------------------
-        // TODAY ATTENDANCE
-        // ----------------------------------------
-
-        const todayAttendanceElement =
+        const video =
             document.getElementById(
-                "todayAttendance"
+                "cameraVideo"
             );
 
 
-        if (todayAttendanceElement) {
+        const overlay =
+            document.getElementById(
+                "cameraOverlay"
+            );
 
-            todayAttendanceElement.textContent =
-                stats.today_attendance ?? 0;
+
+        const placeholder =
+            document.getElementById(
+                "cameraPlaceholder"
+            );
+
+
+        if (video) {
+
+            video.pause();
+
+            video.srcObject =
+                null;
+
+            video.style.display =
+                "none";
 
         }
 
 
-        // ----------------------------------------
-        // REGISTERED STUDENTS
-        // ----------------------------------------
+        if (overlay) {
 
-        const registeredStudentsElement =
-            document.getElementById(
-                "registeredStudents"
+            overlay.style.display =
+                "none";
+
+            clearFaceOverlay();
+
+        }
+
+
+        if (placeholder) {
+
+            placeholder.style.display =
+                "block";
+
+        }
+
+
+        cameraRunning =
+            false;
+
+
+        registrationRunning =
+            false;
+
+
+        registrationStudentId =
+            null;
+
+
+        updateCameraStatus(
+            false
+        );
+
+
+        showCameraMessage(
+            "Camera stopped."
+        );
+
+    }
+
+
+    catch (error) {
+
+        console.error(
+            "Camera stop error:",
+            error
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// CAPTURE FRAME
+// ============================================================
+
+function captureFrameBlob() {
+
+    return new Promise(
+        function (
+            resolve,
+            reject
+        ) {
+
+            const video =
+                document.getElementById(
+                    "cameraVideo"
+                );
+
+
+            const canvas =
+                document.getElementById(
+                    "captureCanvas"
+                );
+
+
+            if (
+                !video ||
+                !canvas
+            ) {
+
+                reject(
+                    new Error(
+                        "Camera elements not found."
+                    )
+                );
+
+                return;
+
+            }
+
+
+            if (
+                video.readyState < 2
+            ) {
+
+                reject(
+                    new Error(
+                        "Camera video is not ready."
+                    )
+                );
+
+                return;
+
+            }
+
+
+            // IMPORTANT:
+            // Do NOT send 1280x720 every time.
+            // 640x360 = much faster.
+
+            const width =
+                Math.min(
+                    video.videoWidth || 640,
+                    640
+                );
+
+
+            const originalWidth =
+                video.videoWidth || 640;
+
+
+            const originalHeight =
+                video.videoHeight || 360;
+
+
+            const scale =
+                width /
+                originalWidth;
+
+
+            const height =
+                Math.round(
+                    originalHeight *
+                    scale
+                );
+
+
+            canvas.width =
+                width;
+
+
+            canvas.height =
+                height;
+
+
+            const context =
+                canvas.getContext(
+                    "2d"
+                );
+
+
+            context.drawImage(
+
+                video,
+
+                0,
+                0,
+
+                width,
+                height
+
             );
 
 
-        if (registeredStudentsElement) {
+            canvas.toBlob(
 
-            registeredStudentsElement.textContent =
+                function (blob) {
 
-                stats.registered_students ??
-                stats.total_students ??
+                    if (!blob) {
+
+                        reject(
+                            new Error(
+                                "Could not create image."
+                            )
+                        );
+
+                        return;
+
+                    }
+
+
+                    resolve(
+                        blob
+                    );
+
+                },
+
+                "image/jpeg",
+
+                0.70
+
+            );
+
+        }
+    );
+
+}
+
+
+// ============================================================
+// SYNC OVERLAY
+// ============================================================
+
+function syncOverlayToVideo() {
+
+    const video =
+        document.getElementById(
+            "cameraVideo"
+        );
+
+
+    const overlay =
+        document.getElementById(
+            "cameraOverlay"
+        );
+
+
+    const box =
+        document.getElementById(
+            "browserCameraBox"
+        );
+
+
+    if (
+        !video ||
+        !overlay ||
+        !box
+    ) {
+
+        return false;
+
+    }
+
+
+    const width =
+        video.videoWidth;
+
+
+    const height =
+        video.videoHeight;
+
+
+    if (
+        !width ||
+        !height
+    ) {
+
+        return false;
+
+    }
+
+
+    const videoRect =
+        video.getBoundingClientRect();
+
+
+    const boxRect =
+        box.getBoundingClientRect();
+
+
+    overlay.width =
+        width;
+
+
+    overlay.height =
+        height;
+
+
+    overlay.style.left =
+        `${videoRect.left - boxRect.left}px`;
+
+
+    overlay.style.top =
+        `${videoRect.top - boxRect.top}px`;
+
+
+    overlay.style.width =
+        `${videoRect.width}px`;
+
+
+    overlay.style.height =
+        `${videoRect.height}px`;
+
+
+    return true;
+
+}
+
+
+// ============================================================
+// DRAW FACE BOXES
+// ============================================================
+
+function drawFaces(faces) {
+
+    const video =
+        document.getElementById(
+            "cameraVideo"
+        );
+
+
+    const overlay =
+        document.getElementById(
+            "cameraOverlay"
+        );
+
+
+    if (
+        !video ||
+        !overlay
+    ) {
+
+        return;
+
+    }
+
+
+    const width =
+        video.videoWidth;
+
+
+    const height =
+        video.videoHeight;
+
+
+    if (
+        !width ||
+        !height
+    ) {
+
+        return;
+
+    }
+
+
+    if (
+        !syncOverlayToVideo()
+    ) {
+
+        return;
+
+    }
+
+
+    const context =
+        overlay.getContext(
+            "2d"
+        );
+
+
+    context.clearRect(
+        0,
+        0,
+        width,
+        height
+    );
+
+
+    if (
+        !faces ||
+        !faces.length
+    ) {
+
+        return;
+
+    }
+
+
+    // Backend receives 640px width.
+    // Browser video may be larger.
+    const scaleX =
+        width /
+        Math.min(
+            width,
+            640
+        );
+
+
+    faces.forEach(
+        function (face) {
+
+            let x =
+                Number(face.x) ||
                 0;
 
+
+            let y =
+                Number(face.y) ||
+                0;
+
+
+            let w =
+                Number(face.width) ||
+                0;
+
+
+            let h =
+                Number(face.height) ||
+                0;
+
+
+            // Scale coordinates when needed.
+            x *= scaleX;
+            w *= scaleX;
+
+            const backendHeight =
+                Math.round(
+                    360 *
+                    (Math.min(width, 640) /
+                    width)
+                );
+
+            if (backendHeight > 0) {
+
+                // Keep Y proportional.
+                const scaleY =
+                    height /
+                    Math.max(
+                        1,
+                        backendHeight
+                    );
+
+                y *= scaleY;
+                h *= scaleY;
+
+            }
+
+
+            if (
+                w <= 0 ||
+                h <= 0
+            ) {
+
+                return;
+
+            }
+
+
+            const isKnown =
+                face.name &&
+                face.name !== "Unknown";
+
+
+            context.lineWidth =
+                4;
+
+
+            context.strokeStyle =
+                isKnown
+                    ? "#22c55e"
+                    : "#ef4444";
+
+
+            context.strokeRect(
+                x,
+                y,
+                w,
+                h
+            );
+
+
+            let label =
+                face.name ||
+                "Unknown";
+
+
+            if (
+                face.emotion &&
+                face.emotion !==
+                    "Unknown"
+            ) {
+
+                label +=
+                    " | " +
+                    face.emotion;
+
+            }
+
+
+            context.font =
+                "bold 20px Arial";
+
+
+            const textWidth =
+                context.measureText(
+                    label
+                ).width;
+
+
+            context.fillStyle =
+                isKnown
+                    ? "#22c55e"
+                    : "#ef4444";
+
+
+            context.fillRect(
+
+                x,
+
+                Math.max(
+                    0,
+                    y - 32
+                ),
+
+                textWidth + 16,
+
+                32
+
+            );
+
+
+            context.fillStyle =
+                "#ffffff";
+
+
+            context.fillText(
+
+                label,
+
+                x + 8,
+
+                Math.max(
+                    22,
+                    y - 9
+                )
+
+            );
+
         }
+    );
+
+}
+
+
+// ============================================================
+// CLEAR FACE BOX
+// ============================================================
+
+function clearFaceOverlay() {
+
+    const overlay =
+        document.getElementById(
+            "cameraOverlay"
+        );
+
+
+    if (!overlay) {
+
+        return;
 
     }
 
-    catch (error) {
 
-        console.error(
-            "Load stats error:",
-            error
+    const context =
+        overlay.getContext(
+            "2d"
         );
+
+
+    context.clearRect(
+
+        0,
+        0,
+
+        overlay.width,
+        overlay.height
+
+    );
+
+}
+
+
+// ============================================================
+// RESIZE
+// ============================================================
+
+window.addEventListener(
+    "resize",
+    function () {
+
+        if (!cameraRunning) {
+
+            return;
+
+        }
+
+
+        requestAnimationFrame(
+            function () {
+
+                syncOverlayToVideo();
+
+            }
+        );
+
+    }
+);
+
+
+// ============================================================
+// RECOGNITION LOOP
+// ============================================================
+
+function startRecognitionLoop() {
+
+    stopRecognitionLoop();
+
+
+    recognitionTimer =
+        setInterval(
+
+            async function () {
+
+                if (!cameraRunning) {
+
+                    return;
+
+                }
+
+
+                if (
+                    cameraMode !==
+                    "attendance"
+                ) {
+
+                    return;
+
+                }
+
+
+                if (processingFrame) {
+
+                    return;
+
+                }
+
+
+                await processRecognitionFrame();
+
+            },
+
+            RECOGNITION_INTERVAL
+
+        );
+
+}
+
+
+// ============================================================
+// STOP RECOGNITION LOOP
+// ============================================================
+
+function stopRecognitionLoop() {
+
+    if (
+        recognitionTimer
+    ) {
+
+        clearInterval(
+            recognitionTimer
+        );
+
+
+        recognitionTimer =
+            null;
 
     }
 
@@ -391,198 +1308,51 @@ async function loadStats() {
 
 
 // ============================================================
-// LOAD REGISTERED STUDENTS
+// PROCESS RECOGNITION FRAME
 // ============================================================
 
-async function loadStudents() {
+async function processRecognitionFrame() {
+
+    processingFrame =
+        true;
+
 
     try {
 
-        const response =
-            await fetch("/api/students");
+        const blob =
+            await captureFrameBlob();
 
 
-        if (!response.ok) {
-
-            throw new Error(
-                "Failed to load students."
-            );
-
-        }
+        const formData =
+            new FormData();
 
 
-        const students =
-            await response.json();
+        formData.append(
 
+            "frame",
 
-        const tableBody =
-            document.getElementById(
-                "studentsTableBody"
-            );
+            blob,
 
+            "camera.jpg"
 
-        if (!tableBody) {
-
-            console.error(
-                "studentsTableBody not found."
-            );
-
-            return;
-
-        }
-
-
-        tableBody.innerHTML = "";
-
-
-        if (
-            !students ||
-            students.length === 0
-        ) {
-
-            tableBody.innerHTML = `
-
-                <tr>
-
-                    <td
-                        colspan="5"
-                        style="text-align:center;"
-                    >
-                        No registered students found.
-                    </td>
-
-                </tr>
-
-            `;
-
-            return;
-
-        }
-
-
-        students.forEach(function (student) {
-
-            const row =
-                document.createElement("tr");
-
-
-            row.innerHTML = `
-
-                <td>
-                    ${student.id ?? "-"}
-                </td>
-
-                <td>
-                    ${escapeHtml(
-                        student.name ?? "-"
-                    )}
-                </td>
-
-                <td>
-                    ${student.photos ?? 0}
-                </td>
-
-                <td>
-
-                    <span class="status-badge">
-
-                        ${escapeHtml(
-                            student.status ??
-                            "Registered"
-                        )}
-
-                    </span>
-
-                </td>
-
-                <td>
-
-                    <button
-                        class="delete-btn"
-                        onclick="deleteStudent(${student.id})"
-                    >
-                        Delete
-                    </button>
-
-                </td>
-
-            `;
-
-
-            tableBody.appendChild(row);
-
-        });
-
-    }
-
-    catch (error) {
-
-        console.error(
-            "Load students error:",
-            error
         );
-
-    }
-
-}
-
-
-// ============================================================
-// DELETE STUDENT
-// ============================================================
-
-async function deleteStudent(
-    studentId
-) {
-
-    try {
-
-        if (
-            studentId === undefined ||
-            studentId === null ||
-            studentId === ""
-        ) {
-
-            alert(
-                "Invalid student ID."
-            );
-
-            return;
-
-        }
-
-
-        const confirmed =
-            confirm(
-
-                `Are you sure you want to delete ` +
-                `Student ID ${studentId}?\n\n` +
-
-                `This will delete:\n` +
-
-                `• Student registration\n` +
-                `• Student photos\n` +
-                `• Attendance records\n` +
-                `• Recognition model data\n\n` +
-
-                `This action cannot be undone.`
-
-            );
-
-
-        if (!confirmed) {
-
-            return;
-
-        }
 
 
         const response =
             await fetch(
-                `/api/students/${studentId}`,
+
+                "/api/browser/process-frame",
+
                 {
-                    method: "DELETE"
+
+                    method:
+                        "POST",
+
+                    body:
+                        formData
+
                 }
+
             );
 
 
@@ -595,9 +1365,12 @@ async function deleteStudent(
             !result.success
         ) {
 
-            alert(
-                result.message ||
-                "Student delete failed."
+            console.error(
+
+                "Recognition error:",
+
+                result.message
+
             );
 
             return;
@@ -605,31 +1378,61 @@ async function deleteStudent(
         }
 
 
-        alert(
-            result.message
+        drawFaces(
+            result.faces || []
         );
 
 
-        await loadStudents();
+        if (
+            result.recognized &&
+            result.person
+        ) {
 
-        await loadAttendance();
+            const person =
+                result.person;
 
-        await loadStats();
+
+            showCameraMessage(
+
+                `${person.name} recognized | ` +
+                `Emotion: ${person.emotion || "Unknown"}`,
+
+                "success"
+
+            );
+
+        }
+
+        else {
+
+            showCameraMessage(
+
+                "Looking for registered students..."
+
+            );
+
+        }
 
     }
+
 
     catch (error) {
 
         console.error(
-            "Delete student error:",
+
+            "Recognition frame error:",
+
             error
+
         );
 
+    }
 
-        alert(
-            "Server error while deleting student.\n\n" +
-            "Flask terminal check karo."
-        );
+
+    finally {
+
+        processingFrame =
+            false;
 
     }
 
@@ -643,10 +1446,6 @@ async function deleteStudent(
 async function registerStudent() {
 
     try {
-
-        // ----------------------------------------
-        // GET INPUTS
-        // ----------------------------------------
 
         const studentIdInput =
             document.getElementById(
@@ -666,14 +1465,13 @@ async function registerStudent() {
             );
 
 
-        // ----------------------------------------
-        // CHECK INPUT ELEMENTS
-        // ----------------------------------------
-
-        if (!studentIdInput) {
+        if (
+            !studentIdInput ||
+            !studentNameInput
+        ) {
 
             alert(
-                "Student ID input not found."
+                "Registration fields not found."
             );
 
             return;
@@ -681,53 +1479,20 @@ async function registerStudent() {
         }
 
 
-        if (!studentNameInput) {
-
-            alert(
-                "Student Name input not found."
+        const studentId =
+            parseInt(
+                studentIdInput.value
             );
 
-            return;
 
-        }
-
-
-        // ----------------------------------------
-        // GET VALUES
-        // ----------------------------------------
-
-        const studentIdText =
-            studentIdInput.value.trim();
-
-
-        const name =
+        const studentName =
             studentNameInput.value.trim();
 
 
-        // ----------------------------------------
-        // VALIDATE STUDENT ID
-        // ----------------------------------------
-
-        if (!studentIdText) {
-
-            alert(
-                "Please enter Student ID."
-            );
-
-            studentIdInput.focus();
-
-            return;
-
-        }
-
-
-        const personId =
-            Number(studentIdText);
-
-
         if (
-            !Number.isInteger(personId) ||
-            personId <= 0
+            !studentId ||
+            isNaN(studentId) ||
+            studentId <= 0
         ) {
 
             alert(
@@ -741,11 +1506,7 @@ async function registerStudent() {
         }
 
 
-        // ----------------------------------------
-        // VALIDATE NAME
-        // ----------------------------------------
-
-        if (!name) {
+        if (!studentName) {
 
             alert(
                 "Please enter Student Name."
@@ -758,28 +1519,960 @@ async function registerStudent() {
         }
 
 
-        // ----------------------------------------
-        // DEFAULT PHOTO COUNT
-        // ----------------------------------------
+        // ----------------------------------------------------
+        // START CAMERA
+        // ----------------------------------------------------
 
-        const photos = 200;
+        if (!cameraRunning) {
+
+            await startCamera();
 
 
-        // ----------------------------------------
-        // CONFIRM REGISTRATION
-        // ----------------------------------------
+            if (!cameraRunning) {
+
+                return;
+
+            }
+
+        }
+
+
+        // ----------------------------------------------------
+        // REGISTRATION MODE
+        // ----------------------------------------------------
+
+        cameraMode =
+            "registration";
+
+
+        stopRecognitionLoop();
+
+
+        registrationRunning =
+            true;
+
+
+        registrationStudentId =
+            studentId;
+
+
+        registrationTotalPhotos =
+            200;
+
+
+        registrationCaptured =
+            0;
+
+
+        if (registerButton) {
+
+            registerButton.disabled =
+                true;
+
+            registerButton.textContent =
+                "Starting...";
+
+        }
+
+
+        showRegistrationStatus(
+            "Starting registration..."
+        );
+
+
+        // ----------------------------------------------------
+        // START SESSION
+        // ----------------------------------------------------
+
+        const startResponse =
+            await fetch(
+
+                "/api/browser/register/start",
+
+                {
+
+                    method:
+                        "POST",
+
+                    headers: {
+
+                        "Content-Type":
+                            "application/json"
+
+                    },
+
+                    body:
+                        JSON.stringify({
+
+                            person_id:
+                                studentId,
+
+                            name:
+                                studentName,
+
+                            photos:
+                                200
+
+                        })
+
+                }
+
+            );
+
+
+        const startResult =
+            await startResponse.json();
+
+
+        if (
+            !startResponse.ok ||
+            !startResult.success
+        ) {
+
+            throw new Error(
+
+                startResult.message ||
+                "Registration could not start."
+
+            );
+
+        }
+
+
+        registrationTotalPhotos =
+            startResult.total_photos ||
+            200;
+
+
+        showRegistrationStatus(
+
+            `Position your face inside camera. ` +
+            `Capturing 0/${registrationTotalPhotos}`
+
+        );
+
+
+        startRegistrationLoop();
+
+    }
+
+
+    catch (error) {
+
+        console.error(
+
+            "Registration error:",
+
+            error
+
+        );
+
+
+        alert(
+
+            error.message ||
+            "Registration failed."
+
+        );
+
+
+        registrationRunning =
+            false;
+
+
+        cameraMode =
+            "attendance";
+
+
+        const button =
+            document.getElementById(
+                "registerBtn"
+            );
+
+
+        if (button) {
+
+            button.disabled =
+                false;
+
+            button.textContent =
+                "Register Student";
+
+        }
+
+
+        if (cameraRunning) {
+
+            startRecognitionLoop();
+
+        }
+
+    }
+
+}
+
+
+// ============================================================
+// REGISTRATION LOOP
+// ============================================================
+
+function startRegistrationLoop() {
+
+    stopRegistrationLoop();
+
+
+    registrationTimer =
+        setInterval(
+
+            async function () {
+
+                if (
+                    !registrationRunning
+                ) {
+
+                    return;
+
+                }
+
+
+                if (
+                    processingFrame
+                ) {
+
+                    return;
+
+                }
+
+
+                await captureRegistrationFrame();
+
+            },
+
+            REGISTRATION_INTERVAL
+
+        );
+
+}
+
+
+// ============================================================
+// STOP REGISTRATION LOOP
+// ============================================================
+
+function stopRegistrationLoop() {
+
+    if (
+        registrationTimer
+    ) {
+
+        clearInterval(
+            registrationTimer
+        );
+
+
+        registrationTimer =
+            null;
+
+    }
+
+}
+
+
+// ============================================================
+// CAPTURE REGISTRATION FRAME
+// ============================================================
+
+async function captureRegistrationFrame() {
+
+    processingFrame =
+        true;
+
+
+    try {
+
+        const blob =
+            await captureFrameBlob();
+
+
+        const formData =
+            new FormData();
+
+
+        formData.append(
+
+            "person_id",
+
+            registrationStudentId
+
+        );
+
+
+        formData.append(
+
+            "frame",
+
+            blob,
+
+            "registration.jpg"
+
+        );
+
+
+        const response =
+            await fetch(
+
+                "/api/browser/register/frame",
+
+                {
+
+                    method:
+                        "POST",
+
+                    body:
+                        formData
+
+                }
+
+            );
+
+
+        const result =
+            await response.json();
+
+
+        if (
+            !response.ok ||
+            !result.success
+        ) {
+
+            console.error(
+
+                "Registration frame error:",
+
+                result.message
+
+            );
+
+            return;
+
+        }
+
+
+        registrationCaptured =
+            result.captured || 0;
+
+
+        // ----------------------------------------------------
+        // FACE BOX
+        // ----------------------------------------------------
+
+        if (
+            result.face_detected
+        ) {
+
+            drawFaces([{
+
+                name:
+                    "Capturing",
+
+                emotion:
+                    "",
+
+                x:
+                    result.x,
+
+                y:
+                    result.y,
+
+                width:
+                    result.width,
+
+                height:
+                    result.height
+
+            }]);
+
+        }
+
+
+        if (
+            result.face_detected
+        ) {
+
+            showRegistrationStatus(
+
+                `📸 Capturing photos: ` +
+
+                `${registrationCaptured}/` +
+
+                `${registrationTotalPhotos}`
+
+            );
+
+        }
+
+        else {
+
+            showRegistrationStatus(
+
+                `⚠️ Face not detected | ` +
+
+                `${registrationCaptured}/` +
+
+                `${registrationTotalPhotos}`
+
+            );
+
+        }
+
+
+        // ----------------------------------------------------
+        // COMPLETE
+        // ----------------------------------------------------
+
+        if (
+            result.complete
+        ) {
+
+            await finishRegistration();
+
+        }
+
+    }
+
+
+    catch (error) {
+
+        console.error(
+
+            "Registration capture error:",
+
+            error
+
+        );
+
+    }
+
+
+    finally {
+
+        processingFrame =
+            false;
+
+    }
+
+}
+
+
+// ============================================================
+// FINISH REGISTRATION
+// ============================================================
+
+async function finishRegistration() {
+
+    if (
+        !registrationRunning
+    ) {
+
+        return;
+
+    }
+
+
+    registrationRunning =
+        false;
+
+
+    stopRegistrationLoop();
+
+
+    showRegistrationStatus(
+
+        "Photos captured. Training recognition model..."
+
+    );
+
+
+    try {
+
+        const response =
+            await fetch(
+
+                "/api/browser/register/finish",
+
+                {
+
+                    method:
+                        "POST",
+
+                    headers: {
+
+                        "Content-Type":
+                            "application/json"
+
+                    },
+
+                    body:
+                        JSON.stringify({
+
+                            person_id:
+                                registrationStudentId
+
+                        })
+
+                }
+
+            );
+
+
+        const result =
+            await response.json();
+
+
+        if (
+            !response.ok ||
+            !result.success
+        ) {
+
+            throw new Error(
+
+                result.message ||
+                "Model training failed."
+
+            );
+
+        }
+
+
+        showRegistrationStatus(
+
+            `✅ ${result.name} registered successfully! ` +
+            `${result.photos} photos captured.`,
+
+            "success"
+
+        );
+
+
+        alert(
+            result.message
+        );
+
+
+        // ----------------------------------------------------
+        // CLEAR FORM
+        // ----------------------------------------------------
+
+        const idInput =
+            document.getElementById(
+                "studentId"
+            );
+
+
+        const nameInput =
+            document.getElementById(
+                "studentName"
+            );
+
+
+        if (idInput) {
+
+            idInput.value =
+                "";
+
+        }
+
+
+        if (nameInput) {
+
+            nameInput.value =
+                "";
+
+        }
+
+
+        // ----------------------------------------------------
+        // REFRESH
+        // ----------------------------------------------------
+
+        await loadStudents();
+
+        await loadStats();
+
+
+        // ----------------------------------------------------
+        // ATTENDANCE MODE
+        // ----------------------------------------------------
+
+        cameraMode =
+            "attendance";
+
+
+        registrationStudentId =
+            null;
+
+
+        const button =
+            document.getElementById(
+                "registerBtn"
+            );
+
+
+        if (button) {
+
+            button.disabled =
+                false;
+
+            button.textContent =
+                "Register Student";
+
+        }
+
+
+        if (cameraRunning) {
+
+            startRecognitionLoop();
+
+        }
+
+    }
+
+
+    catch (error) {
+
+        console.error(
+
+            "Finish registration error:",
+
+            error
+
+        );
+
+
+        alert(
+
+            error.message ||
+            "Registration finish failed."
+
+        );
+
+
+        cameraMode =
+            "attendance";
+
+
+        registrationStudentId =
+            null;
+
+
+        const button =
+            document.getElementById(
+                "registerBtn"
+            );
+
+
+        if (button) {
+
+            button.disabled =
+                false;
+
+            button.textContent =
+                "Register Student";
+
+        }
+
+
+        if (cameraRunning) {
+
+            startRecognitionLoop();
+
+        }
+
+    }
+
+}
+
+
+// ============================================================
+// REGISTRATION STATUS
+// ============================================================
+
+function showRegistrationStatus(
+
+    message,
+
+    type = "normal"
+
+) {
+
+    let element =
+        document.getElementById(
+            "registrationStatus"
+        );
+
+
+    if (!element) {
+
+        const button =
+            document.getElementById(
+                "registerBtn"
+            );
+
+
+        if (!button) {
+
+            return;
+
+        }
+
+
+        element =
+            document.createElement(
+                "div"
+            );
+
+
+        element.id =
+            "registrationStatus";
+
+
+        element.style.marginTop =
+            "12px";
+
+
+        element.style.padding =
+            "12px";
+
+
+        element.style.borderRadius =
+            "8px";
+
+
+        element.style.textAlign =
+            "center";
+
+
+        element.style.fontWeight =
+            "600";
+
+
+        button.parentNode.insertBefore(
+
+            element,
+
+            button.nextSibling
+
+        );
+
+    }
+
+
+    element.textContent =
+        message;
+
+
+    if (
+        type === "success"
+    ) {
+
+        element.style.color =
+            "#15803d";
+
+        element.style.background =
+            "#dcfce7";
+
+    }
+
+    else {
+
+        element.style.color =
+            "#1d4ed8";
+
+        element.style.background =
+            "#dbeafe";
+
+    }
+
+}
+
+
+// ============================================================
+// LOAD ATTENDANCE
+// ============================================================
+
+async function loadAttendance() {
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/attendance"
+            );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                "Attendance API error"
+            );
+
+        }
+
+
+        const records =
+            await response.json();
+
+
+        const table =
+            document.getElementById(
+                "attendanceTableBody"
+            );
+
+
+        if (!table) {
+
+            return;
+
+        }
+
+
+        table.innerHTML =
+            "";
+
+
+        if (
+            !Array.isArray(records) ||
+            records.length === 0
+        ) {
+
+            table.innerHTML = `
+
+                <tr>
+
+                    <td
+                        colspan="6"
+                        class="loading-cell"
+                    >
+                        No attendance records found.
+                    </td>
+
+                </tr>
+
+            `;
+
+            return;
+
+        }
+
+
+        records.forEach(
+
+            function (record) {
+
+                const row =
+                    document.createElement(
+                        "tr"
+                    );
+
+
+                row.innerHTML = `
+
+                    <td>
+                        ${escapeHtml(record.person_id)}
+                    </td>
+
+                    <td>
+                        ${escapeHtml(record.name)}
+                    </td>
+
+                    <td>
+                        ${escapeHtml(
+                            record.emotion ||
+                            "Unknown"
+                        )}
+                    </td>
+
+                    <td>
+                        ${escapeHtml(record.date)}
+                    </td>
+
+                    <td>
+                        ${escapeHtml(record.time)}
+                    </td>
+
+                    <td>
+
+                        <button
+                            class="attendance-delete-btn"
+                            onclick="deleteAttendance(${record.id})"
+                        >
+                            Delete
+                        </button>
+
+                    </td>
+
+                `;
+
+
+                table.appendChild(
+                    row
+                );
+
+            }
+
+        );
+
+    }
+
+
+    catch (error) {
+
+        console.error(
+            "Attendance error:",
+            error
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// DELETE ATTENDANCE
+// ============================================================
+
+async function deleteAttendance(
+    attendanceId
+) {
+
+    try {
+
+        if (
+            attendanceId ===
+                undefined ||
+            attendanceId ===
+                null ||
+            attendanceId ===
+                ""
+        ) {
+
+            alert(
+                "Invalid attendance record ID."
+            );
+
+            return;
+
+        }
+
 
         const confirmed =
             confirm(
 
-                `Register Student?\n\n` +
+                "Are you sure you want to delete this attendance record?\n\n" +
 
-                `Student ID: ${personId}\n` +
-                `Name: ${name}\n` +
-                `Photos: ${photos}\n\n` +
+                "Only this attendance record will be deleted.\n" +
 
-                `The camera will start and ` +
-                `capture ${photos} photos.`
+                "Student registration and photos will NOT be deleted."
 
             );
 
@@ -791,67 +2484,24 @@ async function registerStudent() {
         }
 
 
-        // ----------------------------------------
-        // DISABLE BUTTON
-        // ----------------------------------------
-
-        if (registerButton) {
-
-            registerButton.disabled =
-                true;
-
-            registerButton.textContent =
-                "Registering...";
-
-        }
-
-
-        // ----------------------------------------
-        // SEND REQUEST
-        // IMPORTANT:
-        // BACKEND EXPECTS person_id
-        // ----------------------------------------
-
         const response =
             await fetch(
-                "/api/register",
+
+                `/api/attendance/${attendanceId}`,
+
                 {
-                    method: "POST",
 
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-
-                    body:
-                        JSON.stringify({
-
-                            person_id:
-                                personId,
-
-                            name:
-                                name,
-
-                            photos:
-                                photos
-
-                        })
+                    method:
+                        "DELETE"
 
                 }
+
             );
 
-
-        // ----------------------------------------
-        // READ RESPONSE
-        // ----------------------------------------
 
         const result =
             await response.json();
 
-
-        // ----------------------------------------
-        // ERROR
-        // ----------------------------------------
 
         if (
             !response.ok ||
@@ -861,7 +2511,7 @@ async function registerStudent() {
             alert(
 
                 result.message ||
-                "Student registration failed."
+                "Attendance record delete failed."
 
             );
 
@@ -870,136 +2520,32 @@ async function registerStudent() {
         }
 
 
-        // ----------------------------------------
-        // SUCCESS
-        // ----------------------------------------
-
         alert(
-            result.message ||
-            "Student registered successfully."
+            result.message
         );
 
-
-        // ----------------------------------------
-        // CLEAR FORM
-        // ----------------------------------------
-
-        studentIdInput.value = "";
-
-        studentNameInput.value = "";
-
-
-        // ----------------------------------------
-        // REFRESH DASHBOARD
-        // ----------------------------------------
-
-        await loadStudents();
-
-        await loadStats();
 
         await loadAttendance();
 
+        await loadStats();
+
     }
+
 
     catch (error) {
 
         console.error(
-            "Register student error:",
+
+            "Delete attendance error:",
+
             error
+
         );
 
 
         alert(
 
-            "Server error during registration.\n\n" +
-
-            "Flask terminal check karo."
-
-        );
-
-    }
-
-    finally {
-
-        const registerButton =
-            document.getElementById(
-                "registerBtn"
-            );
-
-
-        if (registerButton) {
-
-            registerButton.disabled =
-                false;
-
-            registerButton.textContent =
-                "Register Student";
-
-        }
-
-    }
-
-}
-
-
-// ============================================================
-// START CAMERA
-// ============================================================
-
-async function startCamera() {
-
-    try {
-
-        const response =
-            await fetch(
-                "/api/start-camera",
-                {
-                    method: "POST"
-                }
-            );
-
-
-        const result =
-            await response.json();
-
-
-        if (
-            !response.ok ||
-            !result.success
-        ) {
-
-            alert(
-
-                result.message ||
-                "Camera start failed."
-
-            );
-
-            return;
-
-        }
-
-
-        cameraRunning = true;
-
-
-        updateCameraUI(
-            true
-        );
-
-    }
-
-    catch (error) {
-
-        console.error(
-            "Start camera error:",
-            error
-        );
-
-
-        alert(
-
-            "Could not start camera.\n\n" +
+            "Server error while deleting attendance record.\n\n" +
             "Flask terminal check karo."
 
         );
@@ -1010,111 +2556,354 @@ async function startCamera() {
 
 
 // ============================================================
-// STOP CAMERA
+// LOAD STUDENTS
 // ============================================================
 
-async function stopCamera() {
+async function loadStudents() {
 
     try {
 
         const response =
             await fetch(
-                "/api/stop-camera",
-                {
-                    method: "POST"
-                }
-            );
-
-
-        const result =
-            await response.json();
-
-
-        if (
-            !response.ok ||
-            !result.success
-        ) {
-
-            alert(
-
-                result.message ||
-                "Camera stop failed."
-
-            );
-
-            return;
-
-        }
-
-
-        cameraRunning = false;
-
-
-        updateCameraUI(
-            false
-        );
-
-    }
-
-    catch (error) {
-
-        console.error(
-            "Stop camera error:",
-            error
-        );
-
-
-        alert(
-
-            "Could not stop camera.\n\n" +
-            "Flask terminal check karo."
-
-        );
-
-    }
-
-}
-
-
-// ============================================================
-// CHECK CAMERA STATUS
-// ============================================================
-
-async function checkCameraStatus() {
-
-    try {
-
-        const response =
-            await fetch(
-                "/api/camera-status"
+                "/api/students"
             );
 
 
         if (!response.ok) {
 
+            throw new Error(
+                "Students API error"
+            );
+
+        }
+
+
+        const students =
+            await response.json();
+
+
+        const table =
+            document.getElementById(
+                "studentsTableBody"
+            );
+
+
+        if (!table) {
+
             return;
 
         }
+
+
+        table.innerHTML =
+            "";
+
+
+        if (
+            !Array.isArray(students) ||
+            students.length === 0
+        ) {
+
+            table.innerHTML = `
+
+                <tr>
+
+                    <td
+                        colspan="5"
+                        class="loading-cell"
+                    >
+                        No registered students.
+                    </td>
+
+                </tr>
+
+            `;
+
+            return;
+
+        }
+
+
+        students.forEach(
+
+            function (student) {
+
+                const row =
+                    document.createElement(
+                        "tr"
+                    );
+
+
+                row.innerHTML = `
+
+                    <td>
+                        ${escapeHtml(student.id)}
+                    </td>
+
+                    <td>
+                        ${escapeHtml(student.name)}
+                    </td>
+
+                    <td>
+                        ${escapeHtml(
+                            student.photos || 0
+                        )}
+                    </td>
+
+                    <td>
+                        ${escapeHtml(
+                            student.status ||
+                            "Registered"
+                        )}
+                    </td>
+
+                    <td>
+
+                        <button
+                            class="delete-btn"
+                            onclick="deleteStudent(${student.id})"
+                        >
+                            Delete
+                        </button>
+
+                    </td>
+
+                `;
+
+
+                table.appendChild(
+                    row
+                );
+
+            }
+
+        );
+
+    }
+
+
+    catch (error) {
+
+        console.error(
+
+            "Students error:",
+
+            error
+
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// DELETE STUDENT
+// ============================================================
+
+async function deleteStudent(
+    studentId
+) {
+
+    try {
+
+        if (
+            studentId ===
+                undefined ||
+            studentId ===
+                null ||
+            studentId ===
+                ""
+        ) {
+
+            alert(
+                "Invalid Student ID."
+            );
+
+            return;
+
+        }
+
+
+        const confirmed =
+            confirm(
+
+                `Are you sure you want to delete Student ID ${studentId}?\n\n` +
+
+                `This will delete:\n` +
+
+                `• Student photos\n` +
+
+                `• Student registration\n` +
+
+                `• Attendance records\n` +
+
+                `• Recognition model data\n\n` +
+
+                `This action cannot be undone.`
+
+            );
+
+
+        if (!confirmed) {
+
+            return;
+
+        }
+
+
+        const response =
+            await fetch(
+
+                `/api/students/${studentId}`,
+
+                {
+
+                    method:
+                        "DELETE"
+
+                }
+
+            );
 
 
         const result =
             await response.json();
 
 
-        cameraRunning =
-            result.running === true;
+        if (
+            !response.ok ||
+            !result.success
+        ) {
+
+            alert(
+
+                result.message ||
+                "Student delete failed."
+
+            );
+
+            return;
+
+        }
 
 
-        updateCameraUI(
-            cameraRunning
+        alert(
+            result.message
         );
 
+
+        await loadStudents();
+
+        await loadAttendance();
+
+        await loadStats();
+
     }
+
 
     catch (error) {
 
         console.error(
-            "Camera status error:",
+
+            "Delete student error:",
+
+            error
+
+        );
+
+
+        alert(
+
+            "Server error while deleting student.\n\n" +
+            "Flask terminal check karo."
+
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// LOAD STATS
+// ============================================================
+
+async function loadStats() {
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/stats"
+            );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                "Stats API error"
+            );
+
+        }
+
+
+        const stats =
+            await response.json();
+
+
+        const totalRecords =
+            document.getElementById(
+                "totalRecords"
+            );
+
+
+        const todayAttendance =
+            document.getElementById(
+                "todayAttendance"
+            );
+
+
+        const registeredStudents =
+            document.getElementById(
+                "registeredStudents"
+            );
+
+
+        if (totalRecords) {
+
+            totalRecords.textContent =
+                stats.total_records ??
+                0;
+
+        }
+
+
+        if (todayAttendance) {
+
+            todayAttendance.textContent =
+                stats.today_attendance ??
+                0;
+
+        }
+
+
+        if (registeredStudents) {
+
+            registeredStudents.textContent =
+                stats.registered_students ??
+                stats.total_students ??
+                0;
+
+        }
+
+    }
+
+
+    catch (error) {
+
+        console.error(
+            "Stats error:",
             error
         );
 
@@ -1124,185 +2913,19 @@ async function checkCameraStatus() {
 
 
 // ============================================================
-// UPDATE CAMERA UI
-// ============================================================
-
-function updateCameraUI(
-    running
-) {
-
-    const startButton =
-        document.getElementById(
-            "startCameraBtn"
-        );
-
-
-    const stopButton =
-        document.getElementById(
-            "stopCameraBtn"
-        );
-
-
-    const cameraStatus =
-        document.getElementById(
-            "cameraStatus"
-        );
-
-
-    // ----------------------------------------
-    // START BUTTON
-    // ----------------------------------------
-
-    if (startButton) {
-
-        startButton.disabled =
-            running;
-
-    }
-
-
-    // ----------------------------------------
-    // STOP BUTTON
-    // ----------------------------------------
-
-    if (stopButton) {
-
-        stopButton.disabled =
-            !running;
-
-    }
-
-
-    // ----------------------------------------
-    // STATUS
-    // ----------------------------------------
-
-    if (cameraStatus) {
-
-        if (running) {
-
-            cameraStatus.textContent =
-                "Camera Running";
-
-
-            cameraStatus.classList.add(
-                "camera-running"
-            );
-
-
-            cameraStatus.classList.remove(
-                "camera-stopped"
-            );
-
-        }
-
-        else {
-
-            cameraStatus.textContent =
-                "Camera Stopped";
-
-
-            cameraStatus.classList.add(
-                "camera-stopped"
-            );
-
-
-            cameraStatus.classList.remove(
-                "camera-running"
-            );
-
-        }
-
-    }
-
-}
-
-
-// ============================================================
-// ESCAPE HTML
-// ============================================================
-
-function escapeHtml(
-    value
-) {
-
-    if (
-        value === null ||
-        value === undefined
-    ) {
-
-        return "";
-
-    }
-
-
-    const div =
-        document.createElement(
-            "div"
-        );
-
-
-    div.textContent =
-        String(value);
-
-
-    return div.innerHTML;
-
-}
-
-
-// ============================================================
-// MANUAL REFRESH
+// REFRESH DASHBOARD
 // ============================================================
 
 async function refreshDashboard() {
 
-    await loadAttendance();
+    await Promise.all([
 
-    await loadStats();
+        loadStats(),
 
-    await loadStudents();
+        loadStudents(),
 
-    await checkCameraStatus();
+        loadAttendance()
+
+    ]);
 
 }
-
-
-// ============================================================
-// EXPORT FUNCTIONS
-// ============================================================
-
-window.loadAttendance =
-    loadAttendance;
-
-
-window.loadStats =
-    loadStats;
-
-
-window.loadStudents =
-    loadStudents;
-
-
-window.deleteAttendance =
-    deleteAttendance;
-
-
-window.deleteStudent =
-    deleteStudent;
-
-
-window.registerStudent =
-    registerStudent;
-
-
-window.startCamera =
-    startCamera;
-
-
-window.stopCamera =
-    stopCamera;
-
-
-window.refreshDashboard =
-    refreshDashboard;

@@ -4,9 +4,59 @@ import numpy as np
 
 from .config import (
     DATASET_DIR,
-    CLASSIFIER_FILE,
-    FACE_CASCADE
+    CLASSIFIER_FILE
 )
+
+
+# ============================================================
+# NORMALIZE FACE
+# ============================================================
+
+def normalize_face(image):
+
+    try:
+
+        if image is None:
+            return None
+
+        # Convert to grayscale if needed
+        if len(image.shape) == 3:
+
+            gray = cv2.cvtColor(
+                image,
+                cv2.COLOR_BGR2GRAY
+            )
+
+        else:
+
+            gray = image
+
+
+        # Same size as live recognition
+        gray = cv2.resize(
+            gray,
+            (200, 200),
+            interpolation=cv2.INTER_AREA
+        )
+
+
+        # Same contrast processing as recognition
+        gray = cv2.equalizeHist(
+            gray
+        )
+
+
+        return gray
+
+
+    except Exception as e:
+
+        print(
+            "Face normalization error:",
+            e
+        )
+
+        return None
 
 
 # ============================================================
@@ -15,39 +65,13 @@ from .config import (
 
 def train_model():
 
-    print("\n========================================")
-    print("TRAINING FACE RECOGNITION MODEL")
+    print()
+    print("========================================")
+    print("     TRAINING FACE RECOGNITION MODEL")
     print("========================================")
 
+
     try:
-
-        # ====================================================
-        # LOAD HAAR CASCADE
-        # ====================================================
-
-        face_cascade = cv2.CascadeClassifier(
-            FACE_CASCADE
-        )
-
-        if face_cascade.empty():
-
-            print(
-                "ERROR: Haar Cascade load nahi hua."
-            )
-
-            return False
-
-
-        # ====================================================
-        # CREATE LBPH RECOGNIZER
-        # ====================================================
-
-        recognizer = cv2.face.LBPHFaceRecognizer_create()
-
-
-        faces = []
-        ids = []
-
 
         # ====================================================
         # CHECK DATASET
@@ -96,7 +120,25 @@ def train_model():
 
 
         # ====================================================
-        # READ EACH STUDENT DATASET
+        # CREATE LBPH
+        # ====================================================
+
+        recognizer = (
+            cv2.face.LBPHFaceRecognizer_create(
+                radius=1,
+                neighbors=8,
+                grid_x=8,
+                grid_y=8
+            )
+        )
+
+
+        faces = []
+        ids = []
+
+
+        # ====================================================
+        # READ ALL STUDENT DATA
         # ====================================================
 
         for student_id in sorted(
@@ -110,14 +152,11 @@ def train_model():
             )
 
 
+            print()
             print(
-                f"\nStudent ID: {student_id}"
+                f"Student ID: {student_id}"
             )
 
-
-            # =================================================
-            # GET IMAGES
-            # =================================================
 
             image_files = [
 
@@ -142,7 +181,7 @@ def train_model():
 
 
             # =================================================
-            # READ IMAGES
+            # READ EACH IMAGE
             # =================================================
 
             for image_file in image_files:
@@ -170,71 +209,44 @@ def train_model():
 
 
                 # =============================================
-                # FACE DETECTION
+                # IMPORTANT
+                # =============================================
+                #
+                # Browser registration already saves
+                # cropped face images.
+                #
+                # Therefore DO NOT run Haar detection again.
+                #
+                # Use exactly the same normalization as
+                # live recognition.
                 # =============================================
 
-                detected_faces = face_cascade.detectMultiScale(
-                    image,
-                    scaleFactor=1.1,
-                    minNeighbors=5
+                face = normalize_face(
+                    image
                 )
 
 
-                # =============================================
-                # FACE FOUND
-                # =============================================
+                if face is None:
 
-                if len(detected_faces) > 0:
-
-                    for (
-                        x,
-                        y,
-                        w,
-                        h
-                    ) in detected_faces:
-
-                        face = image[
-                            y:y + h,
-                            x:x + w
-                        ]
+                    continue
 
 
-                        if face.size == 0:
+                if face.size == 0:
 
-                            continue
-
-
-                        faces.append(
-                            face
-                        )
-
-                        ids.append(
-                            int(student_id)
-                        )
-
-                        count += 1
+                    continue
 
 
-                # =============================================
-                # FACE NOT FOUND
-                # =============================================
+                faces.append(
+                    face
+                )
 
-                else:
 
-                    # Dataset images are already
-                    # cropped face images.
+                ids.append(
+                    int(student_id)
+                )
 
-                    if image.size > 0:
 
-                        faces.append(
-                            image
-                        )
-
-                        ids.append(
-                            int(student_id)
-                        )
-
-                        count += 1
+                count += 1
 
 
             print(
@@ -243,32 +255,35 @@ def train_model():
 
 
         # ====================================================
-        # CHECK TRAINING DATA
+        # CHECK DATA
         # ====================================================
 
         if len(faces) == 0:
 
+            print()
             print(
-                "ERROR: Training ke liye koi face data nahi mila."
+                "ERROR: Training ke liye koi image nahi mili."
             )
 
             return False
 
 
+        print()
         print(
-            "\nTotal training images:",
+            "Total training images:",
             len(faces)
         )
 
 
-        # ====================================================
-        # TRAIN MODEL
-        # ====================================================
-
+        print()
         print(
-            "\nTraining model..."
+            "Training model..."
         )
 
+
+        # ====================================================
+        # TRAIN
+        # ====================================================
 
         recognizer.train(
             faces,
@@ -277,7 +292,7 @@ def train_model():
 
 
         # ====================================================
-        # CREATE MODELS FOLDER
+        # CREATE MODEL DIRECTORY
         # ====================================================
 
         model_folder = os.path.dirname(
@@ -294,7 +309,7 @@ def train_model():
 
 
         # ====================================================
-        # SAVE CLASSIFIER
+        # SAVE MODEL
         # ====================================================
 
         recognizer.write(
@@ -306,66 +321,53 @@ def train_model():
         # SUCCESS
         # ====================================================
 
-        print(
-            "\n========================================"
-        )
+        print()
+        print("========================================")
+        print("      MODEL SUCCESSFULLY TRAINED")
+        print("========================================")
 
-        print(
-            "MODEL SUCCESSFULLY TRAINED"
-        )
-
-        print(
-            "========================================"
-        )
 
         print(
             "Model:",
             CLASSIFIER_FILE
         )
 
+
         print(
             "Total images:",
             len(faces)
         )
+
 
         print(
             "Student IDs:",
             sorted(set(ids))
         )
 
-        print(
-            "========================================\n"
-        )
+
+        print("========================================")
+        print()
 
 
         return True
 
 
-    # ========================================================
-    # ERROR HANDLING
-    # ========================================================
-
     except Exception as e:
 
-        print(
-            "\n========================================"
-        )
+        print()
+        print("========================================")
+        print("          TRAINING ERROR")
+        print("========================================")
 
-        print(
-            "TRAINING ERROR"
-        )
-
-        print(
-            "========================================"
-        )
 
         print(
             repr(e)
         )
 
-        print(
-            "========================================\n"
-        )
+
+        print("========================================")
+        print()
+
 
         return False
 
@@ -377,6 +379,7 @@ def train_model():
 if __name__ == "__main__":
 
     success = train_model()
+
 
     if success:
 
