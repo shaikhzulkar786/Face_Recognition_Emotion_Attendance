@@ -72,7 +72,7 @@ recognizer_lock = threading.Lock()
 # Emotion cache: DeepFace is heavy on Render, so do not run it on every frame.
 emotion_cache = {}
 emotion_cache_lock = threading.Lock()
-EMOTION_CACHE_SECONDS = 2.5
+EMOTION_CACHE_SECONDS = 3.0
 
 # ============================================================
 # FACE DETECTOR
@@ -903,7 +903,8 @@ def detect_emotion(person_id, face_color):
             face_color,
             actions=["emotion"],
             enforce_detection=False,
-            detector_backend="opencv"
+            detector_backend="skip",
+            align=False
         )
 
         if isinstance(analysis, list):
@@ -919,11 +920,16 @@ def detect_emotion(person_id, face_color):
                 "time": time.time()
             }
 
-        print(f"Emotion detected -> {emotion}")
+        print(
+            f"Emotion detected -> ID {int(person_id)}: {emotion}"
+        )
         return emotion
 
     except Exception as error:
-        print("Emotion detection warning:", error)
+        print(
+            f"Emotion detection warning for ID {int(person_id)}:",
+            error
+        )
         return "Unknown"
 
 
